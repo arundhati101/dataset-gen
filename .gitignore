@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.pyc
+
+# Environments
+venv/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Large raw PDFs (optional but recommended)
+data/raw/*.pdf
