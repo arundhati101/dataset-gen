@@ -1,45 +1,47 @@
 import os
 import re
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+BASE_DIR = os.path.dirname(os.path.dirname(__file__))
 
 IN_DIR = os.path.join(BASE_DIR, "data", "cleaned")
 OUT_DIR = os.path.join(BASE_DIR, "data", "clauses")
 
 os.makedirs(OUT_DIR, exist_ok=True)
 
-# Pattern matches:
-# 1.
-# 12.
-# 12A.
-# 12B.
-# 12(1)
-# etc.
-SECTION_PATTERN = re.compile(r'\n\s*\d+[A-Za-z]?\.\s')
+
+def split_into_clauses(text):
+
+    # split at section numbers
+    parts = re.split(r"(?=\b\d+\.\s[A-Z])", text)
+
+    clauses = []
+
+    for p in parts:
+        # split at subsections like (1) or (a)
+        sub = re.split(r"(?=\(\d+\)|\([a-z]\))", p)
+        clauses.extend(sub)
+
+    # remove small junk
+    clauses = [c.strip() for c in clauses if len(c.strip()) > 120]
+
+    return clauses
+
 
 for file in os.listdir(IN_DIR):
     if not file.endswith(".txt"):
         continue
 
+    name = file.replace(".txt", "")
     in_path = os.path.join(IN_DIR, file)
-    with open(in_path, encoding="utf-8") as f:
+    out_path = os.path.join(OUT_DIR, file)
+
+    with open(in_path, "r", encoding="utf-8") as f:
         text = f.read()
 
-    # Ensure numbers start on new line
-    text = re.sub(r'(\d+\.)', r'\n\1', text)
+    clauses = split_into_clauses(text)
 
-    # Split into sections
-    parts = re.split(SECTION_PATTERN, text)
-
-    clauses = []
-    for p in parts:
-        cleaned = p.strip()
-        if len(cleaned.split()) > 40:
-            clauses.append(cleaned)
-
-    out_path = os.path.join(OUT_DIR, file)
     with open(out_path, "w", encoding="utf-8") as f:
         for c in clauses:
             f.write(c + "\n\n")
 
-    print(f"{file}: generated {len(clauses)} clauses")
+    print(f"✅ {name} split → {len(clauses)} clauses")
