@@ -9,5 +9,3 @@ venv/
 .DS_Store
 Thumbs.db
 
-# Large raw PDFs (optional but recommended)
-data/raw/*.pdf
