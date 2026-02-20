@@ -1,11 +1,16 @@
 ﻿import os
+import re
 import json
 import hashlib
-import re
+from pypdf import PdfReader
 
-BASE_DIR = os.path.dirname(os.path.dirname(__file__))
-CLAUSE_DIR = os.path.join(BASE_DIR, "data", "clauses")
-OUT_FILE = os.path.join(BASE_DIR, "data", "legal_qa.json")
+
+# ================= PATHS =================
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+RAW_DIR = os.path.join(PROJECT_ROOT, "data", "raw")
+OUT_FILE = os.path.join(PROJECT_ROOT, "data", "legal_qa.json")
+
+os.makedirs(os.path.join(PROJECT_ROOT, "data"), exist_ok=True)
 
 
 # ================= HASH =================
@@ -13,264 +18,236 @@ def make_hash(text):
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-# ================= CLEAN TEXT =================
-def clean(text):
+# ================= PDF EXTRACT =================
+def extract_pdf(path):
+    reader = PdfReader(path)
+    text = []
+    for page in reader.pages:
+        t = page.extract_text()
+        if t:
+            text.append(t)
+    return "\n".join(text)
 
-    text = re.sub(r"\s+", " ", text)
 
-    # remove state amendments / notes
-    text = re.split(r"STATE AMENDMENTS|Vide .*? Act", text, flags=re.I)[0]
+# ================= CLEAN GLOBAL TEXT =================
+def clean_global(text):
 
-    # remove footnote numbers like 1*** or 2
-    text = re.sub(r"\d+\*+", "", text)
+    # Normalize line endings
+    text = text.replace("\r", "\n")
 
-    # remove stray numbering artifacts
-    text = re.sub(r"\s+\d+\s+", " ", text)
+    # Remove standalone page numbers
+    text = re.sub(r"\n\s*\d+\s*\n", "\n", text)
+
+    # Remove chapter headings
+    text = re.sub(r"\nCHAPTER\s+[IVXLC]+\b.*?\n", "\n", text, flags=re.I)
+
+    # Remove schedules fully
+    text = re.sub(
+        r"\nSCHEDULE\s+[IVXLC]+\b.*?(?=\n\d+[A-Z]?(?:-[A-Z])?\.)",
+        "\n",
+        text,
+        flags=re.S | re.I,
+    )
+
+    # Remove amendment bracket notes
+    text = re.sub(r"\[(Ins\.|Subs\.|Vide).*?\]", "", text, flags=re.I)
+
+    # Collapse multiple spaces
+    text = re.sub(r"[ \t]+", " ", text)
+
+    # Normalize excessive blank lines
+    text = re.sub(r"\n{2,}", "\n", text)
 
     return text.strip()
 
 
-# ================= VALID CLAUSE =================
-def is_valid_clause(c):
-    if len(c) < 120:
-        return False
-    if len(c.split()) < 15:
+# ================= FIX BROKEN SECTION HEADERS =================
+def normalize_section_headers(text):
+    """
+    Converts:
+        2 Definitions
+        2—Definitions
+        2 - Definitions
+    into:
+        2. Definitions
+    """
+
+    text = re.sub(
+        r"^\s*(\d+[A-Z]?(?:-[A-Z])?)\s*(?:[—\-–])?\s+(?=[A-Z])",
+        r"\1. ",
+        text,
+        flags=re.MULTILINE,
+    )
+
+    return text
+
+
+# ================= SPLIT SECTIONS =================
+def split_sections(text):
+    """
+    Detects:
+        1.
+        2.
+        33A.
+        14-I.
+    Anchored at line start only.
+    """
+
+    section_pattern = re.compile(
+        r"""
+        ^\s*
+        (?P<num>\d+[A-Z]?(?:-[A-Z])?)
+        \.\s+
+        (?=[A-Z\(])
+        """,
+        re.MULTILINE | re.VERBOSE,
+    )
+
+    matches = list(section_pattern.finditer(text))
+    sections = []
+
+    for i, match in enumerate(matches):
+
+        sec_num = match.group("num")
+        start = match.end()
+
+        if i + 1 < len(matches):
+            end = matches[i + 1].start()
+        else:
+            end = len(text)
+
+        body = text[start:end].strip()
+
+        if len(body.split()) < 10:
+            continue
+
+        sections.append((sec_num, body))
+
+    return sections
+
+
+# ================= CLEAN SECTION BODY =================
+def clean_section_body(text):
+
+    # Remove leftover amendment stars
+    text = re.sub(r"\*\*+.*", "", text)
+
+    # Remove numeric garbage sequences
+    text = re.sub(r"(?:\d{2,},\s*){4,}\d+", "", text)
+
+    # Fix line break joins inside sentences
+    text = re.sub(r"\n(?=[a-z])", " ", text)
+
+    # Collapse whitespace
+    text = re.sub(r"\s+", " ", text)
+
+    return text.strip()
+
+
+# ================= VALID SECTION FILTER =================
+def valid_section(text):
+
+    if len(text.split()) < 20:
         return False
 
-    junk = [
-        "an act to",
-        "chapter i",
-        "schedule",
-        "printed by",
-        "ministry of"
-    ]
-
-    if any(x in c.lower() for x in junk):
+    if not re.search(
+        r"\b(shall|may|means|includes|provides|liable|entitled|extends|applies)\b",
+        text,
+        re.I,
+    ):
         return False
 
     return True
 
 
-# ================= EXTRACT SECTION =================
-def extract_section(clause):
-
-    # Section like "6. Legitimacy..."
-    sec = re.search(r"^(\d+)\.", clause)
-    if sec:
-        return f"Section {sec.group(1)}"
-
-    # sub-section like (2)
-    sub = re.search(r"^\((\d+)\)", clause)
-    if sub:
-        return f"Sub-section ({sub.group(1)})"
-
-    # clause like (a)
-    cl = re.search(r"^\(([a-z])\)", clause)
-    if cl:
-        return f"Clause ({cl.group(1)})"
-
-    return "this provision"
-
-
-# ================= DETECT LEGAL TOPIC =================
-def detect_topic(clause):
-    lc = clause.lower()
-
-    if "extends to the whole of india" in lc:
-        return "extent"
-
-    if "come into force" in lc:
-        return "commencement"
-
-    if '" ' in clause and "means" in lc:
-        return "definition"
-
-    if "void" in lc or "voidable" in lc:
-        return "validity"
-
-    if "petition" in lc or "filed" in lc:
-        return "procedure"
-
-    if "district court" in lc and "jurisdiction" in lc:
-        return "jurisdiction"
-
-    if "maintenance" in lc:
-        return "maintenance"
-
-    if "custody" in lc:
-        return "custody"
-
-    if "punishable" in lc or "imprisonment" in lc:
-        return "penalty"
-
-    if "may make an order" in lc or "may issue" in lc:
-        return "court_power"
-
-    return "rule"
-
-
-# ================= EXTRACT CORE RULE =================
-def core_rule(clause):
-
-    clause = clean(clause)
-
-    # remove numbering like (1) or 6.
-    clause = re.sub(r"^\(\d+\)\s*", "", clause)
-    clause = re.sub(r"^\d+\.\s*", "", clause)
-
-    # shorten very long clauses to first 2 sentences
-    parts = clause.split(". ")
-    if len(parts) > 2:
-        clause = ". ".join(parts[:2])
-
-    return clause.strip()
-
-
-# ================= GENERATE QA =================
-def generate_qa(clause, law):
-
-    clause = clean(clause)
-    rule = core_rule(clause)
-
-    section = extract_section(clause)
-    topic = detect_topic(clause)
-
-    qa = []
-
-    # ---------- EXTENT ----------
-    if topic == "extent":
-        q = f"What is the territorial extent of the {law} under {section}?"
-        a = f"Under {section} of the {law}, {rule}"
-
-    # ---------- COMMENCEMENT ----------
-    elif topic == "commencement":
-        q = f"What does {section} of the {law} provide regarding commencement of the Act?"
-        a = f"{section} of the {law} states that {rule}"
-
-    # ---------- DEFINITION ----------
-    elif topic == "definition":
-        term = re.search(r'"([^"]+)"', clause)
-        if term:
-            term = term.group(1)
-            q = f"How is '{term}' defined under the {law} in {section}?"
-            a = f"Under {section} of the {law}, {term} is defined as: {rule}"
-        else:
-            q = f"What definition is given in {section} of the {law}?"
-            a = f"{section} of the {law} provides that {rule}"
-
-    # ---------- VALIDITY ----------
-    elif topic == "validity":
-        q = f"What does {section} of the {law} state about validity of marriage?"
-        a = f"{section} of the {law} provides that {rule}"
-
-    # ---------- PROCEDURE ----------
-    elif topic == "procedure":
-        q = f"What procedural requirement is provided in {section} of the {law}?"
-        a = f"{section} of the {law} requires that {rule}"
-
-    # ---------- JURISDICTION ----------
-    elif topic == "jurisdiction":
-        q = f"What jurisdiction rule is provided in {section} of the {law}?"
-        a = f"{section} of the {law} provides that {rule}"
-
-    # ---------- MAINTENANCE ----------
-    elif topic == "maintenance":
-        q = f"What does {section} of the {law} provide regarding maintenance?"
-        a = f"{section} of the {law} states that {rule}"
-
-    # ---------- CUSTODY ----------
-    elif topic == "custody":
-        q = f"What does {section} of the {law} provide regarding custody of children?"
-        a = f"{section} of the {law} provides that {rule}"
-
-    # ---------- COURT POWER ----------
-    elif topic == "court_power":
-        q = f"What power is granted to the court in {section} of the {law}?"
-        a = f"{section} of the {law} authorises that {rule}"
-
-    # ---------- PENALTY ----------
-    elif topic == "penalty":
-        q = f"What punishment is prescribed in {section} of the {law}?"
-        a = f"{section} of the {law} prescribes that {rule}"
-
-    # ---------- GENERAL ----------
-    else:
-        q = f"What legal rule is provided in {section} of the {law}?"
-        a = f"{section} of the {law} states that {rule}"
-
-    qa.append((q, a))
-    return qa
-
-
-# ================= LOAD EXISTING =================
-def load_existing():
-    if not os.path.exists(OUT_FILE):
-        return [], set()
-
-    try:
-        with open(OUT_FILE, "r", encoding="utf-8") as f:
-            d = json.load(f)
-        return d, {x["hash"] for x in d}
-    except:
-        return [], set()
-
-
-# ================= SAVE =================
-def save(data):
-    with open(OUT_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
-
-
 # ================= MAIN =================
 def main():
 
-    dataset, hashes = load_existing()
-    start = len(dataset)
+    dataset = []
+    hashes = set()
+    seen_sections = set()
+    section_index = {}
 
-    for file in os.listdir(CLAUSE_DIR):
+    for file in os.listdir(RAW_DIR):
 
-        if not file.endswith(".txt"):
+        if not file.lower().endswith(".pdf"):
             continue
 
-        law = file[:-4]
-        path = os.path.join(CLAUSE_DIR, file)
+        law = file.replace(".pdf", "")
+        path = os.path.join(RAW_DIR, file)
 
-        with open(path, "r", encoding="utf-8") as f:
-            raw = f.read()
+        print(f"\n📘 Processing {law}")
 
-        raw_clauses = [c.strip() for c in raw.split("\n\n")]
-        clauses = [c for c in raw_clauses if is_valid_clause(c)]
+        raw = extract_pdf(path)
+        raw = clean_global(raw)
+        raw = normalize_section_headers(raw)
+
+        sections = split_sections(raw)
+        print(f"   Sections detected: {len(sections)}")
 
         added = 0
 
-        for i, clause in enumerate(clauses):
+        for sec, body in sections:
 
-            h = make_hash(clause)
+            body = clean_section_body(body)
+
+            if not valid_section(body):
+                continue
+
+            label = f"Section {sec}"
+
+            # Merge duplicates inside same Act
+            if (law, label) in seen_sections:
+                print(f"   ⚠️ duplicate {label}, merging")
+                idx = section_index[(law, label)]
+
+                existing = dataset[idx]
+                new_context = existing["context"] + " " + body
+
+                existing["context"] = new_context
+                existing["answer"] = (
+                    f"{label} of the {law} provides that {new_context}"
+                )
+
+                new_hash = make_hash(law + label + new_context)
+                hashes.discard(existing["hash"])
+                existing["hash"] = new_hash
+                hashes.add(new_hash)
+
+                continue
+
+            question = f"What does {label} of the {law} state?"
+            answer = f"{label} of the {law} provides that {body}"
+
+            h = make_hash(law + label + body)
+
             if h in hashes:
                 continue
 
-            qa_pairs = generate_qa(clause, law)
-
-            for q_i, (q, a) in enumerate(qa_pairs):
-                dataset.append({
-                    "id": f"{law}_{i}_{q_i}",
+            dataset.append(
+                {
+                    "id": f"{law}-{label}",
                     "law": law,
-                    "question": q,
-                    "context": clause,
-                    "answer": a,
-                    "hash": h
-                })
+                    "section": label,
+                    "question": question,
+                    "context": body,
+                    "answer": answer,
+                    "hash": h,
+                }
+            )
 
+            section_index[(law, label)] = len(dataset) - 1
+            seen_sections.add((law, label))
             hashes.add(h)
-            added += len(qa_pairs)
+            added += 1
 
-        print(f"📘 {law} → {added} QA pairs")
+        print(f"   QA pairs added: {added}")
 
-    save(dataset)
+    with open(OUT_FILE, "w", encoding="utf-8") as f:
+        json.dump(dataset, f, indent=2, ensure_ascii=False)
 
-    print("===================================")
-    print(f"TOTAL DATASET SIZE: {len(dataset)}")
-    print(f"NEWLY ADDED: {len(dataset)-start}")
+    print("\n===================================")
+    print(f"FINAL DATASET SIZE: {len(dataset)}")
     print("===================================")
 
 
