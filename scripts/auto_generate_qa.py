@@ -29,10 +29,9 @@ def extract_pdf(path):
     return "\n".join(text)
 
 
-# ================= CLEAN GLOBAL TEXT =================
+# ================= GLOBAL CLEAN =================
 def clean_global(text):
 
-    # Normalize line endings
     text = text.replace("\r", "\n")
 
     # Remove standalone page numbers
@@ -41,39 +40,46 @@ def clean_global(text):
     # Remove chapter headings
     text = re.sub(r"\nCHAPTER\s+[IVXLC]+\b.*?\n", "\n", text, flags=re.I)
 
-    # Remove schedules fully
-    text = re.sub(
-        r"\nSCHEDULE\s+[IVXLC]+\b.*?(?=\n\d+[A-Z]?(?:-[A-Z])?\.)",
-        "\n",
-        text,
-        flags=re.S | re.I,
-    )
+    # Remove bracketed amendment insertions like 1[23A...
+    text = re.sub(r"\d+\[", "", text)
 
-    # Remove amendment bracket notes
-    text = re.sub(r"\[(Ins\.|Subs\.|Vide).*?\]", "", text, flags=re.I)
+    # Remove amendment notes fully
+    text = re.sub(r"Ins\. by Act.*?(?=\.)\.", "", text, flags=re.I)
+    text = re.sub(r"Subs\. by Act.*?(?=\.)\.", "", text, flags=re.I)
 
-    # Collapse multiple spaces
+    # Remove star markers like 2***
+    text = re.sub(r"\d+\*+", "", text)
+
+    # 🔥 Remove stray footnote numbers between words
+    # Example: "date 3 as" → "date as"
+    text = re.sub(r"(?<=\w)\s+\d+\s+(?=\w)", " ", text)
+
+    # 🔥 Remove superscript-style footnote numbers after words
+    # Example: "date3" → "date"
+    text = re.sub(r"(?<=\w)\d+(?=\s)", "", text)
+
+    # Collapse spaces
     text = re.sub(r"[ \t]+", " ", text)
 
-    # Normalize excessive blank lines
+    # Normalize blank lines
     text = re.sub(r"\n{2,}", "\n", text)
 
     return text.strip()
 
-
-# ================= FIX BROKEN SECTION HEADERS =================
+# ================= HEADER NORMALIZATION =================
 def normalize_section_headers(text):
     """
     Converts:
         2 Definitions
         2—Definitions
         2 - Definitions
+        2. Definitions
     into:
         2. Definitions
     """
 
     text = re.sub(
-        r"^\s*(\d+[A-Z]?(?:-[A-Z])?)\s*(?:[—\-–])?\s+(?=[A-Z])",
+        r"^\s*(\d+[A-Z]?(?:-[A-Z])?)\s*(?:\.|—|-|–)?\s+(?=[A-Z\(])",
         r"\1. ",
         text,
         flags=re.MULTILINE,
@@ -85,22 +91,16 @@ def normalize_section_headers(text):
 # ================= SPLIT SECTIONS =================
 def split_sections(text):
     """
-    Detects:
-        1.
-        2.
-        33A.
-        14-I.
-    Anchored at line start only.
+    Strict section splitting.
+    Stops at:
+        - Next numbered section
+        - ALL CAPS headings
+        - Definition-style patterns like (a) "term"
     """
 
     section_pattern = re.compile(
-        r"""
-        ^\s*
-        (?P<num>\d+[A-Z]?(?:-[A-Z])?)
-        \.\s+
-        (?=[A-Z\(])
-        """,
-        re.MULTILINE | re.VERBOSE,
+        r"^\s*(\d+[A-Z]?(?:-[A-Z])?)\.\s+",
+        re.MULTILINE,
     )
 
     matches = list(section_pattern.finditer(text))
@@ -108,7 +108,7 @@ def split_sections(text):
 
     for i, match in enumerate(matches):
 
-        sec_num = match.group("num")
+        sec_num = match.group(1)
         start = match.end()
 
         if i + 1 < len(matches):
@@ -116,9 +116,26 @@ def split_sections(text):
         else:
             end = len(text)
 
-        body = text[start:end].strip()
+        body = text[start:end]
 
-        if len(body.split()) < 10:
+        # Stop at ALL CAPS heading
+        caps_heading = re.search(r"\n[A-Z][A-Z\s]{4,}\n", body)
+        if caps_heading:
+            body = body[:caps_heading.start()]
+
+        # 🔥 Stop at definition clauses like (a) “term”
+        definition_start = re.search(r"\([a-z]\)\s*[\"“]", body)
+        if definition_start:
+            body = body[:definition_start.start()]
+
+        # 🔥 Stop at inserted section like 23A.
+        inserted_section = re.search(r"\n\s*\d+[A-Z]?\.\s", body)
+        if inserted_section:
+            body = body[:inserted_section.start()]
+
+        body = body.strip()
+
+        if len(body.split()) < 15:
             continue
 
         sections.append((sec_num, body))
@@ -129,16 +146,13 @@ def split_sections(text):
 # ================= CLEAN SECTION BODY =================
 def clean_section_body(text):
 
-    # Remove leftover amendment stars
-    text = re.sub(r"\*\*+.*", "", text)
+    # Fix broken words (info rmation → information)
+    text = re.sub(r"(\w)\s+(\w)", r"\1 \2", text)
 
-    # Remove numeric garbage sequences
-    text = re.sub(r"(?:\d{2,},\s*){4,}\d+", "", text)
+    # Remove leftover amendment markers
+    text = re.sub(r"\[\s*.*?\s*\]", "", text)
 
-    # Fix line break joins inside sentences
-    text = re.sub(r"\n(?=[a-z])", " ", text)
-
-    # Collapse whitespace
+    # Remove extra whitespace
     text = re.sub(r"\s+", " ", text)
 
     return text.strip()
@@ -150,11 +164,7 @@ def valid_section(text):
     if len(text.split()) < 20:
         return False
 
-    if not re.search(
-        r"\b(shall|may|means|includes|provides|liable|entitled|extends|applies)\b",
-        text,
-        re.I,
-    ):
+    if not re.search(r"\b(shall|may|means|includes|provides|liable|entitled|extends|applies)\b", text):
         return False
 
     return True
@@ -165,8 +175,6 @@ def main():
 
     dataset = []
     hashes = set()
-    seen_sections = set()
-    section_index = {}
 
     for file in os.listdir(RAW_DIR):
 
@@ -196,28 +204,8 @@ def main():
 
             label = f"Section {sec}"
 
-            # Merge duplicates inside same Act
-            if (law, label) in seen_sections:
-                print(f"   ⚠️ duplicate {label}, merging")
-                idx = section_index[(law, label)]
-
-                existing = dataset[idx]
-                new_context = existing["context"] + " " + body
-
-                existing["context"] = new_context
-                existing["answer"] = (
-                    f"{label} of the {law} provides that {new_context}"
-                )
-
-                new_hash = make_hash(law + label + new_context)
-                hashes.discard(existing["hash"])
-                existing["hash"] = new_hash
-                hashes.add(new_hash)
-
-                continue
-
             question = f"What does {label} of the {law} state?"
-            answer = f"{label} of the {law} provides that {body}"
+            answer = body  # pure statutory language
 
             h = make_hash(law + label + body)
 
@@ -236,8 +224,6 @@ def main():
                 }
             )
 
-            section_index[(law, label)] = len(dataset) - 1
-            seen_sections.add((law, label))
             hashes.add(h)
             added += 1
 
