@@ -2,28 +2,28 @@
 
 A project for extracting structured legal question-answer pairs from PDF statutes and maintaining a clean QA dataset.
 
-## 📋 Table of Contents
+## Table of Contents
 
-- [Features](#-features)
-- [Project Structure](#-project-structure)
-- [Setup](#-setup)
-- [Usage](#-usage)
-- [Workflow](#-recommended-workflow)
-- [Scripts Overview](#-scripts-overview)
+- [Features](#features)
+- [Project Structure](#project-structure)
+- [Setup](#setup)
+- [Usage](#usage)
+- [Workflow](#recommended-workflow)
+- [Scripts Overview](#scripts-overview)
 - [Dependencies](#dependencies)
 - [Notes](#notes)
 - [Troubleshooting](#troubleshooting)
 
-## ✨ Features
+## Features
 
-- 📄 Extracts numbered legal sections from PDF files
-- 🧹 Cleans and normalizes legal text for reliable section parsing
-- 🤖 Converts section text into QA records
-- 🔍 Detects conflicting answers for identical questions
-- 🗑️ Removes duplicate dataset entries
-- 📊 Exports dataset statistics and versioned backups
+- Extracts numbered legal sections from PDF files
+- Cleans and normalizes legal text for reliable section parsing
+- Converts section text into question-answer records
+- Detects conflicting answers for identical questions
+- Removes duplicate dataset entries
+- Exports dataset statistics and versioned backups
 
-## 📁 Project Structure
+## Project Structure
 
 ```
 dataset-gen/
@@ -42,15 +42,15 @@ dataset-gen/
 └── README.md                       # This file
 ```
 
-## 🛠 Setup
+## Setup
 
-### 1️⃣ Create a virtual environment
+### Create a virtual environment
 
 ```bash
 python -m venv .venv
 ```
 
-### 2️⃣ Activate the environment
+### Activate the environment
 
 **Windows (PowerShell):**
 
@@ -64,13 +64,13 @@ python -m venv .venv
 source .venv/bin/activate
 ```
 
-### 3️⃣ Install dependencies
+### Install dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-## ▶️ Usage
+## Usage
 
 ### Generate the QA dataset
 
@@ -111,7 +111,7 @@ python scripts/export_with_stats.py
 - Creates a timestamped backup copy
 - Writes dataset metrics to `data/dataset_stats.json`
 
-## 🔄 Recommended workflow
+## Recommended workflow
 
 1. Place PDF documents in `data/raw/`
 2. Run `python scripts/auto_generate_qa.py`
@@ -121,7 +121,7 @@ python scripts/export_with_stats.py
 6. Review `data/legal_qa.json` and `data/dataset_stats.json`
 7. Use the clean dataset in downstream RAG/chatbot pipelines
 
-## 📝 Scripts Overview
+## Scripts Overview
 
 ### `scripts/auto_generate_qa.py`
 
@@ -147,12 +147,14 @@ What it does:
 
 ### `scripts/remove_duplicates.py`
 
-This script deduplicates the dataset.
+This script deduplicates the dataset and collapses conflicting answers by question.
 
 What it does:
 - Loads `data/legal_qa.json`
+- Creates a backup copy before cleanup
 - Removes entries with duplicate hashes
 - Removes exact duplicate question-answer rows
+- Resolves questions with multiple answer variants by keeping the most common answer
 - Writes the cleaned dataset back to disk
 
 ### `scripts/export_with_stats.py`

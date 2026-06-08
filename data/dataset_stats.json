@@ -1,47 +1,47 @@
 {
-  "total_records": 7428,
+  "total_records": 4817,
   "unique_laws": 44,
-  "average_words_per_section": 194.13,
-  "longest_section_words": 4821,
+  "average_words_per_section": 176.83,
+  "longest_section_words": 3279,
   "shortest_section_words": 20,
   "duplicate_hashes_detected": 0,
   "top_legal_terms": [
     [
       "shall",
-      6278
+      4081
     ],
     [
       "may",
-      5045
+      3396
     ],
     [
       "liable",
-      765
+      564
     ],
     [
       "entitled",
-      585
+      333
     ],
     [
       "means",
-      538
+      300
     ],
     [
       "includes",
-      268
+      145
     ],
     [
       "applies",
-      218
+      112
     ],
     [
       "extends",
-      82
+      76
     ],
     [
       "provides",
-      61
+      35
     ]
   ],
-  "generated_at": "20260226_101311"
+  "generated_at": "20260608_233933"
 }
