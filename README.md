@@ -1,6 +1,6 @@
 # Legal QA Dataset Generator
 
-A comprehensive tool for extracting, generating, and managing question-answer pairs from legal PDF documents with built-in conflict detection and deduplication.
+A project for extracting structured legal question-answer pairs from PDF statutes and maintaining a clean QA dataset.
 
 ## 📋 Table of Contents
 
@@ -10,188 +10,201 @@ A comprehensive tool for extracting, generating, and managing question-answer pa
 - [Usage](#-usage)
 - [Workflow](#-recommended-workflow)
 - [Scripts Overview](#-scripts-overview)
+- [Dependencies](#dependencies)
+- [Notes](#notes)
+- [Troubleshooting](#troubleshooting)
 
 ## ✨ Features
 
-- 📄 **Automated QA Generation** from legal PDF documents
-- 🔍 **Conflict Detection** for inconsistent answers
-- 🗑️ **Smart Deduplication** with hash-based comparison
-- 🎯 **Normalized Question Matching** for better accuracy
-- 📊 **Clean JSON Output** ready for RAG pipelines
+- 📄 Extracts numbered legal sections from PDF files
+- 🧹 Cleans and normalizes legal text for reliable section parsing
+- 🤖 Converts section text into QA records
+- 🔍 Detects conflicting answers for identical questions
+- 🗑️ Removes duplicate dataset entries
+- 📊 Exports dataset statistics and versioned backups
 
 ## 📁 Project Structure
+
 ```
-legal-qa-dataset/
+dataset-gen/
 ├── data/
-│   ├── raw/                    # Place your PDF files here
-│   └── legal_qa.json           # Generated QA dataset
+│   ├── raw/                        # Input PDF files
+│   ├── legal_qa.json               # Generated QA dataset
+│   ├── dataset_stats.json          # Exported dataset statistics
+│   └── legal_qa_<timestamp>.json   # Versioned dataset backups
 ├── scripts/
-│   ├── auto_generate_qa.py     # Main QA generation script
-│   ├── check_duplicates.py     # Conflict detection tool
-│   └── remove_duplicates.py    # Deduplication utility
-├── .venv/                      # Virtual environment (auto-generated)
-├── requirements.txt            # Python dependencies
-└── README.md                   # This file
+│   ├── auto_generate_qa.py         # Main QA generation script
+│   ├── check_duplicates.py         # Conflict detection tool
+│   ├── remove_duplicates.py        # Deduplication utility
+│   ├── export_with_stats.py        # Versioned export and stats generator
+│   └── tempCodeRunnerFile.py       # Temporary duplicate of main generator
+├── requirements.txt                # Python dependency list
+└── README.md                       # This file
 ```
 
 ## 🛠 Setup
 
-### 1️⃣ Create Virtual Environment
+### 1️⃣ Create a virtual environment
+
 ```bash
 python -m venv .venv
 ```
 
-### 2️⃣ Activate Environment
+### 2️⃣ Activate the environment
 
 **Windows (PowerShell):**
+
 ```powershell
 .\.venv\Scripts\Activate.ps1
 ```
 
 **Mac/Linux:**
+
 ```bash
 source .venv/bin/activate
 ```
 
-### 3️⃣ Install Dependencies
+### 3️⃣ Install dependencies
+
 ```bash
 pip install -r requirements.txt
 ```
 
 ## ▶️ Usage
 
-### Generate QA Dataset
+### Generate the QA dataset
 
-Extract questions and answers from PDFs in the `data/raw/` directory:
 ```bash
 python scripts/auto_generate_qa.py
 ```
 
-**Output:** Creates/updates `data/legal_qa.json`
+- Reads `.pdf` files from `data/raw/`
+- Extracts and cleans text
+- Splits legal sections into QA records
+- Writes `data/legal_qa.json`
 
-### Check for Conflicts
+### Check for conflicts
 
-Detect inconsistencies where the same question has different answers:
 ```bash
 python scripts/check_duplicates.py
 ```
 
-**Purpose:** Identifies conflicts across different PDF versions
+- Finds questions with multiple distinct answers
+- Helps identify inconsistent or duplicate entries
 
-### Remove Duplicates
+### Remove duplicates
 
-Clean the dataset by removing duplicate entries:
 ```bash
 python scripts/remove_duplicates.py
 ```
 
-**Action:** Rewrites `legal_qa.json` with deduplicated data
+- Removes duplicate hashes
+- Removes duplicate `(question, answer)` pairs
+- Saves a cleaned dataset
 
-## 🔄 Recommended Workflow
+### Export dataset and stats
 
-Follow this sequence for optimal results:
-
-1. **Prepare Data**  
-   Place your PDF documents in `data/raw/`
-
-2. **Generate Dataset**  
 ```bash
-   python scripts/auto_generate_qa.py
+python scripts/export_with_stats.py
 ```
 
-3. **Check for Conflicts**  
-```bash
-   python scripts/check_duplicates.py
-```
+- Creates a timestamped backup copy
+- Writes dataset metrics to `data/dataset_stats.json`
 
-4. **Remove Duplicates** (if needed)  
-```bash
-   python scripts/remove_duplicates.py
-```
+## 🔄 Recommended workflow
 
-5. **Inspect Output**  
-   Review `data/legal_qa.json` for quality
-
-6. **Deploy to Pipeline**  
-   Feed the clean dataset into your RAG/embedding pipeline
+1. Place PDF documents in `data/raw/`
+2. Run `python scripts/auto_generate_qa.py`
+3. Run `python scripts/check_duplicates.py`
+4. Run `python scripts/remove_duplicates.py`
+5. Run `python scripts/export_with_stats.py`
+6. Review `data/legal_qa.json` and `data/dataset_stats.json`
+7. Use the clean dataset in downstream RAG/chatbot pipelines
 
 ## 📝 Scripts Overview
 
-### 🔎 Conflict Checker
+### `scripts/auto_generate_qa.py`
 
-**File:** `scripts/check_duplicates.py`
+This is the main dataset builder.
 
-Detects cases where the same normalized question has different answer text. Used to identify inconsistencies across different PDF versions.
+What it does:
+- Reads PDF content using `pypdf`
+- Cleans page text and removes noise
+- Normalizes section headers such as `12.`
+- Extracts numbered sections from the document
+- Filters out short or irrelevant text blocks
+- Builds JSON records with `id`, `law`, `section`, `question`, `context`, `answer`, and `hash`
 
-**Key Features:**
-- Normalizes questions for accurate matching
-- Flags conflicts with detailed reporting
-- Non-destructive analysis
+### `scripts/check_duplicates.py`
 
-### 🗑️ Hard Deduplication
+This script detects inconsistent answers.
 
-**File:** `scripts/remove_duplicates.py`
+What it does:
+- Loads `data/legal_qa.json`
+- Normalizes question text for grouping
+- Finds questions with more than one unique answer
+- Prints conflict details and a summary count
 
-Removes duplicate hashes and duplicate question-answer pairs. Rewrites `legal_qa.json` with a clean dataset.
+### `scripts/remove_duplicates.py`
 
-**Key Features:**
-- Hash-based duplicate detection
-- Content-aware deduplication
-- Automatic backup creation (optional)
+This script deduplicates the dataset.
 
-### 🤖 QA Generator
+What it does:
+- Loads `data/legal_qa.json`
+- Removes entries with duplicate hashes
+- Removes exact duplicate question-answer rows
+- Writes the cleaned dataset back to disk
 
-**File:** `scripts/auto_generate_qa.py`
+### `scripts/export_with_stats.py`
 
-Automatically extracts and generates question-answer pairs from legal PDF documents.
+This script exports a versioned dataset copy and generates statistics.
 
-**Key Features:**
-- PDF text extraction
-- AI-powered QA generation
-- Batch processing support
-- Error handling and logging
+What it does:
+- Copies `data/legal_qa.json` to `data/legal_qa_<timestamp>.json`
+- Computes metrics such as total records, unique laws, average section length, and duplicate hashes
+- Saves summary stats to `data/dataset_stats.json`
 
-## 📦 Requirements
+### `scripts/tempCodeRunnerFile.py`
 
-- Python 3.8+
-- Dependencies listed in `requirements.txt`
+This is a temporary duplicate of the main generator script and is not part of the core workflow.
 
-**Core Libraries:**
-- `PyPDF2` or `pdfplumber` - PDF text extraction
-- `transformers` or API client - QA generation
-- `json` - Data serialization
+## Dependencies
 
-## 🤝 Contributing
+The full dependency list is in `requirements.txt`.
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Test thoroughly
-5. Submit a pull request
+Current scripts use:
+- `pypdf` for PDF text extraction
+- Python standard library modules: `os`, `json`, `re`, `hashlib`, `collections`, `datetime`, `shutil`
 
+The repository also contains broader ML/RAG-focused packages in `requirements.txt`, but the present script set does not require them.
 
-## 💡 Tips
+## Notes
 
-- **Regular Backups:** Always backup `legal_qa.json` before running deduplication
-- **PDF Quality:** Higher quality PDFs yield better QA pairs
-- **Batch Processing:** Process PDFs in batches for large datasets
-- **Version Control:** Track changes to your dataset using Git
+- `data/legal_qa.json` is the main generated QA dataset.
+- `data/dataset_stats.json` is produced by `export_with_stats.py`.
+- `data/raw/` must contain PDFs before running the generator.
+- The script flow is repeatable for new legal documents.
 
-## 🐛 Troubleshooting
+## Troubleshooting
 
-### Common Issues
+### PDF extraction fails
 
-**Issue:** Script fails to read PDF  
-**Solution:** Ensure PDF is not password-protected or corrupted
+- Confirm the PDF is not password-protected
+- Confirm the file is in `data/raw/`
 
-**Issue:** Duplicate detection not working  
-**Solution:** Run conflict checker before deduplication
+### No entries in `legal_qa.json`
 
-**Issue:** Memory errors with large PDFs  
-**Solution:** Process PDFs individually or increase system RAM
+- Confirm the PDF contains numbered sections
+- Confirm the text passes the script's quality filters
 
-## 📞 Support
+### Duplicate records remain
 
-For issues, questions, or contributions, please [open an issue](your-repo-link) on GitHub.
+- Run `python scripts/check_duplicates.py`
+- Run `python scripts/remove_duplicates.py`
 
-**Made with ❤️ for Legal Tech**
+## Manager presentation notes
+
+1. Explain the goal: convert legal PDFs into a structured QA dataset.
+2. Show the input folder and generated output file.
+3. Walk through the main scripts: generate, check, clean, export.
+4. Highlight that the process is repeatable and version-controlled.
